@@ -1,0 +1,732 @@
+// Deposits Gaming — database schema
+// See docs/SCHEMA.md for the rationale behind these choices.
+//
+// Conventions:
+//   - Money is Decimal(14,2). Never Float.
+//   - Nothing is hard deleted; state lives in status enums.
+//   - monthKey is 'YYYY-MM' computed in APP_TIMEZONE (Asia/Kolkata) by the
+//     application at write time, so monthly grouping is an indexed equality filter.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN
+  MANAGER
+  PUBLISHER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum OfferStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+  COMPLETED
+  ARCHIVED
+}
+
+/// Which test-data pools an offer may consume from.
+/// Default OWNER_PLUS_SUPER_ADMIN: the offer owner's own uploads first, then the
+/// Super Admin central pool. Consumption only — never visibility.
+enum DataSourcePolicy {
+  OWNER_PLUS_SUPER_ADMIN
+  OWNER_ONLY
+}
+
+/// Where a deposit task gets its identity.
+/// Default NEW_IDENTITY: deposits draw a fresh record from the pool, independent
+/// of leads. FROM_PRIOR_LEAD is retained so an offer can be switched later.
+enum DepositIdentitySource {
+  NEW_IDENTITY
+  FROM_PRIOR_LEAD
+  EITHER
+}
+
+enum TestDataStatus {
+  AVAILABLE
+  RESERVED
+  USED
+  RELEASED
+  DISABLED
+}
+
+enum ImportBatchStatus {
+  PENDING_CONFIRM
+  IMPORTED
+  CANCELLED
+}
+
+enum TaskType {
+  LEAD
+  DEPOSIT
+}
+
+enum TaskSessionStatus {
+  OPEN
+  COMPLETED
+  ABANDONED
+  EXPIRED
+}
+
+enum DepositStatus {
+  ACTIVE
+  COMPLETED
+}
+
+/// Append-only money ledger entry types.
+enum BalanceEntryType {
+  OPENING
+  TOPUP
+  ADJUSTMENT
+  WITHDRAWAL
+}
+
+enum WithdrawalStatus {
+  RECORDED
+  APPROVED
+  REJECTED
+}
+
+enum AdvanceStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+enum ProxyProtocol {
+  HTTP
+  HTTPS
+  SOCKS5
+}
+
+enum ProxyStatus {
+  ACTIVE
+  DISABLED
+}
+
+// ---------------------------------------------------------------------------
+// Identity and access
+// ---------------------------------------------------------------------------
+
+model User {
+  id                 String     @id @default(uuid()) @db.Uuid
+  email              String     @unique
+  passwordHash       String     @map("password_hash")
+  fullName           String     @map("full_name")
+  role               Role
+  status             UserStatus @default(ACTIVE)
+  phone              String?
+
+  /// Publishers only. Enforced by a CHECK constraint plus a trigger asserting the
+  /// referenced user is a MANAGER. See migration 002.
+  managerId          String?    @map("manager_id") @db.Uuid
+  manager            User?      @relation("ManagerPublishers", fields: [managerId], references: [id], onDelete: Restrict)
+  publishers         User[]     @relation("ManagerPublishers")
+
+  createdById        String?    @map("created_by_id") @db.Uuid
+  createdBy          User?      @relation("UserCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers       User[]     @relation("UserCreator")
+
+  lastLoginAt        DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  failedLoginCount   Int        @default(0) @map("failed_login_count")
+  lockedUntil        DateTime?  @map("locked_until") @db.Timestamptz(6)
+  mustChangePassword Boolean    @default(true) @map("must_change_password")
+
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions           Session[]
+  ownedOffers        Offer[]              @relation("OfferOwner")
+  createdOffers      Offer[]              @relation("OfferCreator")
+  extendedOffers     OfferExtension[]
+  offerAssignments   OfferPublisher[]     @relation("AssignedPublisher")
+  assignmentsMade    OfferPublisher[]     @relation("AssignmentAuthor")
+  ownedTestData      TestData[]           @relation("TestDataOwner")
+  reservedTestData   TestData[]           @relation("TestDataReserver")
+  consumedTestData   TestData[]           @relation("TestDataConsumer")
+  importBatches      ImportBatch[]
+  taskSessions       TaskSession[]        @relation("TaskPublisher")
+  publisherLeads     Lead[]               @relation("LeadPublisher")
+  managedLeads       Lead[]               @relation("LeadManager")
+  publisherDeposits  Deposit[]            @relation("DepositPublisher")
+  managedDeposits    Deposit[]            @relation("DepositManager")
+  statusChanges      DepositStatusChange[]
+  balanceEntries     BalanceEntry[]
+  publisherWithdrawals Withdrawal[]       @relation("WithdrawalPublisher")
+  managedWithdrawals   Withdrawal[]       @relation("WithdrawalManager")
+  gameplayRecords    GameplayRecord[]
+  advancesReceived   Advance[]            @relation("AdvancePublisher")
+  advancesGiven      Advance[]            @relation("AdvanceManager")
+  advancesCreated    Advance[]            @relation("AdvanceCreator")
+  ownedProxies       Proxy[]              @relation("ProxyOwner")
+  proxyAssignments   ProxyAssignment[]    @relation("ProxyAssignedPublisher")
+  proxyAssignmentsMade ProxyAssignment[]  @relation("ProxyAssignmentAuthor")
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  settingsUpdated    SystemSetting[]
+
+  @@index([managerId])
+  @@index([role, status])
+  @@map("users")
+}
+
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// sha256 of the refresh token. The raw token is never stored.
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  ipAddress        String?   @map("ip_address")
+  userAgent        String?   @map("user_agent")
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Offers
+// ---------------------------------------------------------------------------
+
+model Offer {
+  id                          String                @id @default(uuid()) @db.Uuid
+  name                        String
+  brand                       String
+  description                 String?
+  notes                       String?
+  /// Shown to the publisher on the task screen (promo codes, quirks, warnings).
+  publisherInstructions       String?               @map("publisher_instructions")
+  /// ISO 3166-1 alpha-2. Test data is matched on this and never crosses it.
+  countryCode                 String                @map("country_code") @db.Char(2)
+  url                         String
+  status                      OfferStatus           @default(DRAFT)
+
+  ownerUserId                 String                @map("owner_user_id") @db.Uuid
+  owner                       User                  @relation("OfferOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  createdById                 String                @map("created_by_id") @db.Uuid
+  createdBy                   User                  @relation("OfferCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  startDate                   DateTime              @map("start_date") @db.Date
+  /// Source of truth for expiry. Red in the UI is `now() > expiry_date`, computed
+  /// at read time so it cannot drift from a stale cron flag.
+  expiryDate                  DateTime              @map("expiry_date") @db.Date
+
+  monthlyLeadTarget           Int                   @map("monthly_lead_target")
+  monthlyDepositTarget        Int                   @map("monthly_deposit_target")
+  monthlyDepositAmountTarget  Decimal               @map("monthly_deposit_amount_target") @db.Decimal(14, 2)
+  lifetimeDepositAmountTarget Decimal?              @map("lifetime_deposit_amount_target") @db.Decimal(14, 2)
+
+  /// Per-publisher gap between activities, in seconds. Not global.
+  leadIntervalSeconds         Int                   @map("lead_interval_seconds")
+  depositIntervalSeconds      Int                   @map("deposit_interval_seconds")
+  gameplayIntervalDays        Int                   @map("gameplay_interval_days")
+
+  dataSourcePolicy            DataSourcePolicy      @default(OWNER_PLUS_SUPER_ADMIN) @map("data_source_policy")
+  depositIdentitySource       DepositIdentitySource @default(NEW_IDENTITY) @map("deposit_identity_source")
+  lowDataThreshold            Int                   @default(10) @map("low_data_threshold")
+  currency                    String                @default("USD") @db.Char(3)
+
+  createdAt                   DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  extensions                  OfferExtension[]
+  assignments                 OfferPublisher[]
+  taskSessions                TaskSession[]
+  leads                       Lead[]
+  deposits                    Deposit[]
+  withdrawals                 Withdrawal[]
+  consumedTestData            TestData[]            @relation("TestDataOffer")
+  proxyAssignments            ProxyAssignment[]
+
+  @@index([status, expiryDate])
+  @@index([ownerUserId])
+  @@index([countryCode, status])
+  @@map("offers")
+}
+
+model OfferExtension {
+  id                 String   @id @default(uuid()) @db.Uuid
+  offerId            String   @map("offer_id") @db.Uuid
+  offer              Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  previousExpiryDate DateTime @map("previous_expiry_date") @db.Date
+  newExpiryDate      DateTime @map("new_expiry_date") @db.Date
+  extendedById       String   @map("extended_by_id") @db.Uuid
+  extendedBy         User     @relation(fields: [extendedById], references: [id], onDelete: Restrict)
+  reason             String?
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([offerId, createdAt])
+  @@map("offer_extensions")
+}
+
+/// Assignment of a publisher to an offer. Also the concurrency mutex: every
+/// timer check and target check locks this row with SELECT ... FOR UPDATE so
+/// that a (offer, publisher) pair is serialised without a global lock.
+model OfferPublisher {
+  id                 String   @id @default(uuid()) @db.Uuid
+  offerId            String   @map("offer_id") @db.Uuid
+  offer              Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  publisherId        String   @map("publisher_id") @db.Uuid
+  publisher          User     @relation("AssignedPublisher", fields: [publisherId], references: [id], onDelete: Cascade)
+
+  /// NULL means draw from the shared offer-level target (the confirmed default).
+  /// Setting a value caps this one publisher without affecting the others.
+  monthlyLeadCap     Int?     @map("monthly_lead_cap")
+  monthlyDepositCap  Int?     @map("monthly_deposit_cap")
+
+  active             Boolean  @default(true)
+  assignedById       String   @map("assigned_by_id") @db.Uuid
+  assignedBy         User     @relation("AssignmentAuthor", fields: [assignedById], references: [id], onDelete: Restrict)
+  assignedAt         DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+
+  @@unique([offerId, publisherId])
+  @@index([publisherId, active])
+  @@map("offer_publishers")
+}
+
+// ---------------------------------------------------------------------------
+// Test data
+// ---------------------------------------------------------------------------
+
+model TestData {
+  id                   String         @id @default(uuid()) @db.Uuid
+  /// Drives both visibility and the consumption pool.
+  ownerUserId          String         @map("owner_user_id") @db.Uuid
+  owner                User           @relation("TestDataOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  importBatchId        String?        @map("import_batch_id") @db.Uuid
+  importBatch          ImportBatch?   @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  countryCode          String         @map("country_code") @db.Char(2)
+  firstName            String         @map("first_name")
+  lastName             String         @map("last_name")
+  email                String?
+  phone                String?
+  address              String?
+  city                 String?
+  state                String?
+  postalCode           String?        @map("postal_code")
+  dateOfBirth          DateTime?      @map("date_of_birth") @db.Date
+  /// Any additional columns the importer was configured to keep.
+  extra                Json           @default("{}")
+
+  status               TestDataStatus @default(AVAILABLE)
+  reservedByUserId     String?        @map("reserved_by_user_id") @db.Uuid
+  reservedBy           User?          @relation("TestDataReserver", fields: [reservedByUserId], references: [id], onDelete: SetNull)
+  reservedAt           DateTime?      @map("reserved_at") @db.Timestamptz(6)
+  /// Abandoned reservations are swept back to AVAILABLE after this passes.
+  reservationExpiresAt DateTime?      @map("reservation_expires_at") @db.Timestamptz(6)
+
+  usedAt               DateTime?      @map("used_at") @db.Timestamptz(6)
+  usedByUserId         String?        @map("used_by_user_id") @db.Uuid
+  usedBy               User?          @relation("TestDataConsumer", fields: [usedByUserId], references: [id], onDelete: SetNull)
+  usedOfferId          String?        @map("used_offer_id") @db.Uuid
+  usedOffer            Offer?         @relation("TestDataOffer", fields: [usedOfferId], references: [id], onDelete: SetNull)
+
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  taskSessions         TaskSession[]
+  lead                 Lead?
+  deposit              Deposit?
+  proxyAssignments     ProxyAssignment[]
+
+  /// The assignment query. Most important index in the system.
+  @@index([countryCode, status, ownerUserId])
+  /// The reservation sweeper.
+  @@index([status, reservationExpiresAt])
+  @@index([importBatchId])
+  @@map("test_data")
+}
+
+model ImportBatch {
+  id             String            @id @default(uuid()) @db.Uuid
+  ownerUserId    String            @map("owner_user_id") @db.Uuid
+  owner          User              @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  filename       String
+  countryCode    String            @map("country_code") @db.Char(2)
+  /// Spreadsheet header -> field name. This is what makes the importer
+  /// format-agnostic; the column layout is never assumed.
+  columnMapping  Json              @map("column_mapping")
+  totalRows      Int               @default(0) @map("total_rows")
+  validRows      Int               @default(0) @map("valid_rows")
+  invalidRows    Int               @default(0) @map("invalid_rows")
+  duplicateRows  Int               @default(0) @map("duplicate_rows")
+  importedRows   Int               @default(0) @map("imported_rows")
+  errorReport    Json              @default("[]") @map("error_report")
+  status         ImportBatchStatus @default(PENDING_CONFIRM)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  records        TestData[]
+
+  @@index([ownerUserId, createdAt])
+  @@map("import_batches")
+}
+
+// ---------------------------------------------------------------------------
+// Task execution
+// ---------------------------------------------------------------------------
+
+/// Bridges reserving an identity and completing the work. Without it an
+/// abandoned task would leak a reserved record forever.
+model TaskSession {
+  id           String            @id @default(uuid()) @db.Uuid
+  offerId      String            @map("offer_id") @db.Uuid
+  offer        Offer             @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  publisherId  String            @map("publisher_id") @db.Uuid
+  publisher    User              @relation("TaskPublisher", fields: [publisherId], references: [id], onDelete: Cascade)
+  /// Snapshot of the supervising manager at task time.
+  managerId    String            @map("manager_id") @db.Uuid
+  type         TaskType
+  testDataId   String?           @map("test_data_id") @db.Uuid
+  testData     TestData?         @relation(fields: [testDataId], references: [id], onDelete: SetNull)
+  proxyId      String?           @map("proxy_id") @db.Uuid
+  proxy        Proxy?            @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+  status       TaskSessionStatus @default(OPEN)
+  startedAt    DateTime          @default(now()) @map("started_at") @db.Timestamptz(6)
+  expiresAt    DateTime          @map("expires_at") @db.Timestamptz(6)
+  completedAt  DateTime?         @map("completed_at") @db.Timestamptz(6)
+
+  lead         Lead?
+  deposit      Deposit?
+
+  @@index([publisherId, status])
+  @@index([status, expiresAt])
+  @@map("task_sessions")
+}
+
+model Lead {
+  id            String       @id @default(uuid()) @db.Uuid
+  offerId       String       @map("offer_id") @db.Uuid
+  offer         Offer        @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  publisherId   String       @map("publisher_id") @db.Uuid
+  publisher     User         @relation("LeadPublisher", fields: [publisherId], references: [id], onDelete: Restrict)
+  /// Denormalised snapshot. If a publisher later moves to a different manager,
+  /// historical reporting stays with the manager who supervised the work.
+  managerId     String       @map("manager_id") @db.Uuid
+  manager       User         @relation("LeadManager", fields: [managerId], references: [id], onDelete: Restrict)
+
+  /// One identity produces at most one lead, ever. This unique constraint is the
+  /// database-level guarantee behind "never reused".
+  testDataId    String       @unique @map("test_data_id") @db.Uuid
+  testData      TestData     @relation(fields: [testDataId], references: [id], onDelete: Restrict)
+
+  taskSessionId String       @unique @map("task_session_id") @db.Uuid
+  taskSession   TaskSession  @relation(fields: [taskSessionId], references: [id], onDelete: Restrict)
+  proxyId       String?      @map("proxy_id") @db.Uuid
+  proxy         Proxy?       @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  completedAt   DateTime     @default(now()) @map("completed_at") @db.Timestamptz(6)
+  /// 'YYYY-MM' in APP_TIMEZONE, written by the application.
+  monthKey      String       @map("month_key") @db.VarChar(7)
+  notes         String?
+
+  /// The timer query: most recent lead for this offer + publisher.
+  @@index([offerId, publisherId, completedAt])
+  @@index([offerId, monthKey])
+  @@index([publisherId, monthKey])
+  @@index([managerId, monthKey])
+  @@map("leads")
+}
+
+// ---------------------------------------------------------------------------
+// Deposits
+// ---------------------------------------------------------------------------
+
+model Deposit {
+  id                 String                @id @default(uuid()) @db.Uuid
+  offerId            String                @map("offer_id") @db.Uuid
+  offer              Offer                 @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  publisherId        String                @map("publisher_id") @db.Uuid
+  publisher          User                  @relation("DepositPublisher", fields: [publisherId], references: [id], onDelete: Restrict)
+  managerId          String                @map("manager_id") @db.Uuid
+  manager            User                  @relation("DepositManager", fields: [managerId], references: [id], onDelete: Restrict)
+
+  /// Unused while depositIdentitySource is NEW_IDENTITY. Retained so an offer can
+  /// be switched to FROM_PRIOR_LEAD without a migration.
+  leadId             String?               @unique @map("lead_id") @db.Uuid
+
+  /// Under NEW_IDENTITY every deposit consumes its own identity. Unique, mirroring
+  /// leads, so any record is consumed exactly once by exactly one activity.
+  testDataId         String?               @unique @map("test_data_id") @db.Uuid
+  testData           TestData?             @relation(fields: [testDataId], references: [id], onDelete: Restrict)
+
+  taskSessionId      String?               @unique @map("task_session_id") @db.Uuid
+  taskSession        TaskSession?          @relation(fields: [taskSessionId], references: [id], onDelete: SetNull)
+
+  accountName        String                @map("account_name")
+  accountEmail       String                @map("account_email")
+  /// AES-256-GCM. Never returned in a list response; reveal is audited.
+  accountSecretEnc   Bytes?                @map("account_secret_enc")
+
+  amount             Decimal               @db.Decimal(14, 2)
+  method             String
+  currency           String                @default("USD") @db.Char(3)
+  status             DepositStatus         @default(ACTIVE)
+
+  /// Cached. The balance_entries ledger is the source of truth.
+  currentBalance     Decimal               @default(0) @map("current_balance") @db.Decimal(14, 2)
+
+  lastGameplayAt     DateTime?             @map("last_gameplay_at") @db.Timestamptz(6)
+  nextGameplayDueAt  DateTime?             @map("next_gameplay_due_at") @db.Timestamptz(6)
+
+  depositedAt        DateTime              @default(now()) @map("deposited_at") @db.Timestamptz(6)
+  monthKey           String                @map("month_key") @db.VarChar(7)
+  notes              String?
+
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  statusChanges      DepositStatusChange[]
+  balanceEntries     BalanceEntry[]
+  withdrawals        Withdrawal[]
+  gameplayRecords    GameplayRecord[]
+
+  @@index([offerId, publisherId, depositedAt])
+  /// The overdue-gameplay query.
+  @@index([status, nextGameplayDueAt])
+  @@index([managerId, monthKey])
+  @@index([publisherId, monthKey])
+  @@index([offerId, monthKey])
+  @@map("deposits")
+}
+
+model DepositStatusChange {
+  id          String        @id @default(uuid()) @db.Uuid
+  depositId   String        @map("deposit_id") @db.Uuid
+  deposit     Deposit       @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  fromStatus  DepositStatus @map("from_status")
+  toStatus    DepositStatus @map("to_status")
+  changedById String        @map("changed_by_id") @db.Uuid
+  changedBy   User          @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  note        String?
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([depositId, createdAt])
+  @@map("deposit_status_changes")
+}
+
+/// Append-only money ledger. Never updated or deleted; a mistake is corrected
+/// with a compensating ADJUSTMENT entry.
+model BalanceEntry {
+  id            String           @id @default(uuid()) @db.Uuid
+  depositId     String           @map("deposit_id") @db.Uuid
+  deposit       Deposit          @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  type          BalanceEntryType
+  amount        Decimal          @db.Decimal(14, 2)
+  balanceBefore Decimal          @map("balance_before") @db.Decimal(14, 2)
+  balanceAfter  Decimal          @map("balance_after") @db.Decimal(14, 2)
+  note          String?
+  createdById   String           @map("created_by_id") @db.Uuid
+  createdBy     User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  withdrawal    Withdrawal?
+
+  @@index([depositId, createdAt])
+  @@map("balance_entries")
+}
+
+model Withdrawal {
+  id             String           @id @default(uuid()) @db.Uuid
+  depositId      String           @map("deposit_id") @db.Uuid
+  deposit        Deposit          @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  publisherId    String           @map("publisher_id") @db.Uuid
+  publisher      User             @relation("WithdrawalPublisher", fields: [publisherId], references: [id], onDelete: Restrict)
+  managerId      String           @map("manager_id") @db.Uuid
+  manager        User             @relation("WithdrawalManager", fields: [managerId], references: [id], onDelete: Restrict)
+  offerId        String           @map("offer_id") @db.Uuid
+  offer          Offer            @relation(fields: [offerId], references: [id], onDelete: Restrict)
+
+  amount         Decimal          @db.Decimal(14, 2)
+  method         String?
+  withdrawnAt    DateTime         @map("withdrawn_at") @db.Timestamptz(6)
+  notes          String?
+  /// Present so an approval flow can be switched on later without a migration.
+  status         WithdrawalStatus @default(RECORDED)
+
+  balanceEntryId String           @unique @map("balance_entry_id") @db.Uuid
+  balanceEntry   BalanceEntry     @relation(fields: [balanceEntryId], references: [id], onDelete: Restrict)
+
+  monthKey       String           @map("month_key") @db.VarChar(7)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publisherId, withdrawnAt])
+  @@index([managerId, monthKey])
+  @@index([depositId])
+  @@map("withdrawals")
+}
+
+model GameplayRecord {
+  id                 String    @id @default(uuid()) @db.Uuid
+  depositId          String    @map("deposit_id") @db.Uuid
+  deposit            Deposit   @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  publisherId        String    @map("publisher_id") @db.Uuid
+  publisher          User      @relation(fields: [publisherId], references: [id], onDelete: Restrict)
+  confirmedAt        DateTime  @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  /// What the due date was at the moment of confirmation, so lateness stays
+  /// auditable after the next due date is recalculated.
+  dueAtWhenConfirmed DateTime? @map("due_at_when_confirmed") @db.Timestamptz(6)
+  wasOverdue         Boolean   @default(false) @map("was_overdue")
+
+  @@index([depositId, confirmedAt])
+  @@map("gameplay_records")
+}
+
+// ---------------------------------------------------------------------------
+// Advances
+// ---------------------------------------------------------------------------
+
+model Advance {
+  id          String        @id @default(uuid()) @db.Uuid
+  publisherId String        @map("publisher_id") @db.Uuid
+  publisher   User          @relation("AdvancePublisher", fields: [publisherId], references: [id], onDelete: Restrict)
+  managerId   String        @map("manager_id") @db.Uuid
+  manager     User          @relation("AdvanceManager", fields: [managerId], references: [id], onDelete: Restrict)
+  monthKey    String        @map("month_key") @db.VarChar(7)
+  amount      Decimal       @db.Decimal(14, 2)
+  currency    String        @default("USD") @db.Char(3)
+  paidOn      DateTime?     @map("paid_on") @db.Date
+  status      AdvanceStatus @default(PENDING)
+  notes       String?
+  createdById String        @map("created_by_id") @db.Uuid
+  createdBy   User          @relation("AdvanceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([publisherId, monthKey])
+  @@index([managerId, monthKey])
+  @@map("advances")
+}
+
+// ---------------------------------------------------------------------------
+// Proxies
+// ---------------------------------------------------------------------------
+
+model Proxy {
+  id            String            @id @default(uuid()) @db.Uuid
+  label         String
+  host          String
+  port          Int
+  protocol      ProxyProtocol     @default(HTTP)
+  username      String?
+  /// AES-256-GCM. Never in a list response. Reveal is task-scoped and audited.
+  passwordEnc   Bytes?            @map("password_enc")
+  countryCode   String            @map("country_code") @db.Char(2)
+  status        ProxyStatus       @default(ACTIVE)
+  ownerUserId   String            @map("owner_user_id") @db.Uuid
+  owner         User              @relation("ProxyOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  lastCheckedAt DateTime?         @map("last_checked_at") @db.Timestamptz(6)
+  lastCheckOk   Boolean?          @map("last_check_ok")
+  notes         String?
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignments   ProxyAssignment[]
+  taskSessions  TaskSession[]
+  leads         Lead[]
+
+  @@index([countryCode, status])
+  @@index([ownerUserId])
+  @@map("proxies")
+}
+
+model ProxyAssignment {
+  id           String    @id @default(uuid()) @db.Uuid
+  proxyId      String    @map("proxy_id") @db.Uuid
+  proxy        Proxy     @relation(fields: [proxyId], references: [id], onDelete: Cascade)
+  publisherId  String?   @map("publisher_id") @db.Uuid
+  publisher    User?     @relation("ProxyAssignedPublisher", fields: [publisherId], references: [id], onDelete: Cascade)
+  offerId      String?   @map("offer_id") @db.Uuid
+  offer        Offer?    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  /// Sticky assignment: this identity always reaches the brand from this IP.
+  /// Highest priority in proxy resolution.
+  testDataId   String?   @map("test_data_id") @db.Uuid
+  testData     TestData? @relation(fields: [testDataId], references: [id], onDelete: Cascade)
+  active       Boolean   @default(true)
+  assignedById String    @map("assigned_by_id") @db.Uuid
+  assignedBy   User      @relation("ProxyAssignmentAuthor", fields: [assignedById], references: [id], onDelete: Restrict)
+  assignedAt   DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(6)
+
+  @@unique([testDataId])
+  @@index([publisherId, offerId, active])
+  @@index([proxyId, active])
+  @@map("proxy_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// System
+// ---------------------------------------------------------------------------
+
+/// Append-only. The application's Postgres role is granted INSERT and SELECT
+/// only, so even a compromised application cannot rewrite history.
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorRole   Role?    @map("actor_role")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String
+  title      String
+  body       String?
+  entityType String?   @map("entity_type")
+  /// Empty string means "no entity", never NULL. Postgres treats NULLs as
+  /// distinct in a unique index, so a nullable column here would silently
+  /// disable dedupe for exactly the alerts that have no entity (low test data,
+  /// monthly target approaching) — the ones that repeat most.
+  entityId   String    @default("") @map("entity_id")
+  /// 'YYYY-MM-DD' in APP_TIMEZONE. Combined with the unique index below this
+  /// stops a recurring condition producing a new row on every cron tick.
+  dedupeDay  String    @map("dedupe_day") @db.VarChar(10)
+  readAt     DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([userId, type, entityId, dedupeDay])
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}

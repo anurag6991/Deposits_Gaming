@@ -1,0 +1,38 @@
+{
+  "name": "deposits-gaming",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal testing management platform for lead and deposit testing",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build --workspace=@deposits/shared && npm run build --workspace=@deposits/api",
+    "dev:api": "npm run dev --workspace=@deposits/api",
+    "lint": "eslint .",
+    "typecheck": "tsc --build --verbose",
+    "test": "npm run test --workspace=@deposits/api",
+    "db:validate": "npm run db:validate --workspace=@deposits/api",
+    "db:generate": "npm run db:generate --workspace=@deposits/api",
+    "db:migrate": "npm run db:migrate --workspace=@deposits/api",
+    "db:deploy": "npm run db:deploy --workspace=@deposits/api",
+    "db:seed": "npm run db:seed --workspace=@deposits/api",
+    "verify:db": "node ops/scripts/verify-migrations.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.5",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
+  }
+}
