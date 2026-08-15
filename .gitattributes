@@ -1,0 +1,17 @@
+# Normalise to LF in the repository. Deploy target is Linux; CRLF in shell scripts
+# breaks them on the VPS.
+* text=auto eol=lf
+
+# Scripts must always be LF
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.dump binary
