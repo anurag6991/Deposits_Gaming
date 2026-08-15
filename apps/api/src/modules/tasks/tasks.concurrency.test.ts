@@ -249,7 +249,7 @@ describe('concurrent target enforcement', () => {
 });
 
 describe('per-publisher timers', () => {
-  it('blocks the same publisher but not a colleague', async () => {
+  it('blocks the publisher who acted, but not their colleagues', async () => {
     await resetDatabase();
 
     const admin = await createSuperAdmin();
