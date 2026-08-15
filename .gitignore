@@ -48,3 +48,7 @@ prisma/*.db-journal
 
 # Generated Prisma client
 apps/api/src/generated/
+
+# Next.js
+.next/
+next-env.d.ts
