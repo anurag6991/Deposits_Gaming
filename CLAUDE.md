@@ -102,9 +102,13 @@ Postgres — mocks cannot prove `SKIP LOCKED` works.
 
 These are settled. Do not re-litigate them; change them only on explicit instruction.
 
-1. **Test-data pools are strictly separated.** `data_source_policy = OWNER_ONLY` on
-   every offer. A Manager's offers consume only that Manager's uploads. No fallback to
-   the Super Admin pool, no cross-pool draw, ever.
+1. **Super Admin data is a shared central pool.**
+   `data_source_policy = OWNER_PLUS_SUPER_ADMIN` by default. An offer consumes its own
+   owner's uploads first, then falls back to the Super Admin pool.
+   **Consumption is shared; visibility is not.** A Manager still sees only their own
+   uploads in every list, search, filter, count, and export — consuming a central
+   record must never make it visible. Manager-to-manager isolation is absolute: only
+   the Super Admin pool is shared.
 2. **Deposits use a fresh identity.** `deposit_identity_source = NEW_IDENTITY`. A
    deposit task draws a new identity from the pool exactly as a lead does; the
    publisher registers and deposits in one session. Leads and deposits are independent

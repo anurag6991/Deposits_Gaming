@@ -97,10 +97,21 @@ Legend: **A** = all, **O** = own scope only, **–** = no access
 
 ## Notes on Super Admin data and Manager offers
 
-A Manager's offer draws test data from the Manager's own pool by default
-(`data_source_policy = OWNER_ONLY`). If the Super Admin wants a Manager's publishers to
-consume the Super Admin's central pool, the Super Admin sets that offer to
-`OWNER_PLUS_SUPER_ADMIN`. Even then the Manager still cannot *browse* Super Admin data
-— their publishers merely consume from it one record at a time. This keeps the wall in
-section 5 of the brief intact while making a shared central pool possible. See
-DECISIONS.md item 1.
+The Super Admin pool is shared for **consumption** by default
+(`data_source_policy = OWNER_PLUS_SUPER_ADMIN`). An offer spends its own owner's
+uploads first, then draws from the central pool.
+
+This does not weaken wall 1 above. Consumption and visibility are separate:
+
+| | Manager's own uploads | Super Admin central pool | Another Manager's uploads |
+|---|:--:|:--:|:--:|
+| Manager can browse / search / export | yes | **no** | **no** |
+| Manager can see counts and pool stats | yes | **no** | **no** |
+| Their publishers can consume from it | yes | **yes** | **no** |
+
+A publisher receives exactly one reserved identity for one open task, regardless of
+which pool it came from, and cannot tell or query which pool that was. There is no
+endpoint through which a Manager or Publisher can enumerate central-pool records.
+
+`OWNER_ONLY` can be set per offer to seal an offer to its own data. See DECISIONS.md
+item 1.

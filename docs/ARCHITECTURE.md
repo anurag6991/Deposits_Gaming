@@ -258,18 +258,31 @@ Inside one transaction:
 
 ```sql
 SELECT id FROM test_data
- WHERE country_code = $1
-   AND status = 'AVAILABLE'
-   AND owner_user_id = ANY($2)      -- resolved from offer.data_source_policy
- ORDER BY created_at
+ WHERE country_code  = $1           -- the offer's target country, never anything else
+   AND status        = 'AVAILABLE'
+   AND owner_user_id = ANY($2)      -- allowed owners, from offer.data_source_policy
+ ORDER BY (owner_user_id = $3) DESC, -- $3 = offer owner: own pool before central
+          created_at                 -- then oldest first
  FOR UPDATE SKIP LOCKED
  LIMIT 1;
 ```
+
+`$2` is resolved from the policy: `OWNER_ONLY` gives `[offer.owner_user_id]`, and the
+default `OWNER_PLUS_SUPER_ADMIN` gives `[offer.owner_user_id, <super admin ids>]`.
+
+The `ORDER BY` puts the offer owner's own records first and falls back to the Super
+Admin central pool only when the owner's pool is dry. In Postgres a boolean sorts false
+before true, so `DESC` yields own-first. Own-pool-first is deliberate: a Manager's
+records are usable by nobody else, so spending them first preserves the shared reserve.
 
 `FOR UPDATE SKIP LOCKED` guarantees two concurrent publishers can never receive the
 same row. The row moves to `RESERVED` with
 `reservation_expires_at = now() + settings.reservation_ttl`. A cron sweeper returns
 expired reservations to `AVAILABLE` and writes an audit entry.
+
+Consuming from the central pool never grants visibility into it. The reserved record is
+returned to the publisher as a single identity payload; no endpoint lets a Manager or
+Publisher list, count, search, or export Super Admin records.
 
 ### 8.2 Timer and target enforcement (one mutex, both checks)
 
@@ -319,7 +332,10 @@ no daylight saving, so there are no DST boundaries to handle.
 
 Both task types draw from the same test-data pool: a lead consumes one identity and a
 deposit consumes one identity (confirmed `NEW_IDENTITY` model). An offer targeting 100
-leads and 50 deposits therefore needs 150 identities for the month. Combined with
-strict pool separation, each owner must upload for their own full combined volume —
-there is no fallback to another pool. Low-data alerts count remaining identities
-against leads plus deposits outstanding.
+leads and 50 deposits therefore needs 150 identities for the month, not 100.
+
+Supply comes from the offer owner's own uploads first, then the Super Admin central
+pool. Because every Manager shares that central pool, demand across all offers is what
+matters, not demand per offer. The Super Admin dashboard therefore shows central-pool
+depth per country alongside total outstanding demand (leads plus deposits remaining
+across every active offer), and the low-data alert fires against that combined figure.

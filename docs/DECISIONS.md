@@ -7,7 +7,7 @@ recommendation, all of which are reversible settings rather than baked-in assump
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Test-data pool | **DECIDED — strict separation.** Each owner's pool is isolated. `OWNER_ONLY` is the default and the central-pool option stays switched off. |
+| 1 | Test-data pool | **DECIDED — shared central pool.** Super Admin uploads are consumable by all managers' offers. Default `OWNER_PLUS_SUPER_ADMIN`, own pool first then central. Visibility stays strict. |
 | 2 | Deposit identity source | **DECIDED — fresh identity (`NEW_IDENTITY`).** Deposits draw from the pool independently of leads. |
 | 3 | Monthly targets | **DECIDED — shared** across all assigned publishers. Per-publisher caps stay available but unset. |
 | 5 | Timezone | **DECIDED — `Asia/Kolkata` (IST).** |
@@ -18,18 +18,38 @@ Items 4 and 6–15 proceed on their stated recommendations unless you say otherw
 
 ## 1. Which test-data pool feeds an offer? **(most important)**
 
-> **DECIDED: strict separation.** Every pool is walled off from every other pool.
-> `data_source_policy` defaults to `OWNER_ONLY` on every offer and the
-> `OWNER_PLUS_SUPER_ADMIN` option is left switched off. A Manager's offers consume only
-> that Manager's uploads; Super Admin offers consume only Super Admin uploads. No pool
-> can drain another, and no ownership boundary is crossed in any view or query.
+> **DECIDED (revised): Super Admin data is a shared central pool.**
+> `data_source_policy` defaults to `OWNER_PLUS_SUPER_ADMIN`. The Super Admin uploads
+> centrally and every Manager's offers may consume from that pool.
 >
-> The column remains in the schema so the shared-pool option can be enabled later per
-> offer, but nothing uses it until you explicitly turn it on.
+> **Consumption** — an offer draws from:
+> 1. its own owner's uploads first, then
+> 2. the Super Admin central pool as fallback.
 >
-> Consequence to be aware of: a Manager who runs out of data is blocked until they
-> upload more — there is no silent fallback. The low-data alert (item in ROADMAP) is
-> what gives them warning before that happens.
+> Own-pool-first is deliberate. A Manager's own records are usable by nobody else, so
+> spending them first preserves the shared reserve for everyone. The reverse order
+> would let one Manager drain the central pool while their private records sit idle.
+>
+> **Visibility is unchanged and still strict.** A Manager cannot browse, search,
+> filter, export, or count Super Admin records in the Test Data screen — they see only
+> their own uploads, exactly as the brief requires. Their publishers merely *consume*
+> from the central pool, one reserved record at a time, and a publisher never sees more
+> than the single identity for their current task. Consumption and visibility are
+> separate concerns and only consumption is shared.
+>
+> **Manager-to-manager isolation is untouched.** Manager A can never consume or see
+> Manager B's uploads. Only the Super Admin pool is shared.
+>
+> **Consequence: managers now compete for the central pool.** Manager A's publishers
+> can exhaust records Manager B was relying on. The atomic reservation already prevents
+> two publishers receiving the same record, so this is a fairness question, not a
+> correctness one. For now it is handled by alerting rather than rationing: the Super
+> Admin dashboard shows central-pool depth per country, and a low-data alert fires
+> before exhaustion. A per-manager monthly quota on the central pool can be added later
+> if one Manager proves to be hogging it — the schema does not need to change for that.
+>
+> `OWNER_ONLY` remains available per offer for any offer that should be sealed to its
+> own data.
 
 The brief says a Manager may only see data they uploaded, and may not see Super Admin
 data. It does not say which pool a *publisher* draws from when they work an offer.

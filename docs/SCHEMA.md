@@ -84,7 +84,7 @@ Index `(user_id, expires_at)`. Expired rows purged nightly.
 | lead_interval_seconds | int | gap between leads, per publisher |
 | deposit_interval_seconds | int | gap between deposits, per publisher |
 | gameplay_interval_days | int | |
-| data_source_policy | enum | `OWNER_ONLY` (default) \| `OWNER_PLUS_SUPER_ADMIN` |
+| data_source_policy | enum | `OWNER_PLUS_SUPER_ADMIN` (default) \| `OWNER_ONLY` |
 | deposit_identity_source | enum | `NEW_IDENTITY` (default) \| `FROM_PRIOR_LEAD` \| `EITHER` |
 | low_data_threshold | int default 10 | |
 | currency | char(3) default 'USD' | future-proofing only |
