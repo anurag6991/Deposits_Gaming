@@ -3,9 +3,33 @@
 Each item has a recommendation. If you say nothing, the build proceeds with the
 recommendation, all of which are reversible settings rather than baked-in assumptions.
 
+## Status
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Test-data pool | **DECIDED — strict separation.** Each owner's pool is isolated. `OWNER_ONLY` is the default and the central-pool option stays switched off. |
+| 2 | Deposit identity source | **DECIDED — fresh identity (`NEW_IDENTITY`).** Deposits draw from the pool independently of leads. |
+| 3 | Monthly targets | **DECIDED — shared** across all assigned publishers. Per-publisher caps stay available but unset. |
+| 5 | Timezone | **DECIDED — `Asia/Kolkata` (IST).** |
+
+Items 4 and 6–15 proceed on their stated recommendations unless you say otherwise.
+
 ---
 
 ## 1. Which test-data pool feeds an offer? **(most important)**
+
+> **DECIDED: strict separation.** Every pool is walled off from every other pool.
+> `data_source_policy` defaults to `OWNER_ONLY` on every offer and the
+> `OWNER_PLUS_SUPER_ADMIN` option is left switched off. A Manager's offers consume only
+> that Manager's uploads; Super Admin offers consume only Super Admin uploads. No pool
+> can drain another, and no ownership boundary is crossed in any view or query.
+>
+> The column remains in the schema so the shared-pool option can be enabled later per
+> offer, but nothing uses it until you explicitly turn it on.
+>
+> Consequence to be aware of: a Manager who runs out of data is blocked until they
+> upload more — there is no silent fallback. The low-data alert (item in ROADMAP) is
+> what gives them warning before that happens.
 
 The brief says a Manager may only see data they uploaded, and may not see Super Admin
 data. It does not say which pool a *publisher* draws from when they work an offer.
@@ -24,30 +48,48 @@ to browse central data. This preserves the wall and makes a shared pool possible
 
 ## 2. Is a deposit made on a fresh identity, or on an account created by an earlier lead?
 
-The brief treats leads and deposits as two independent task types on the same offer. In
-real gaming flow, the lead is the registration and the deposit funds *that same
-account*. If deposits always consume a fresh identity, you end up depositing into
-accounts that were never registered.
+> **DECIDED: fresh identity (`NEW_IDENTITY`).** A deposit task draws a brand-new test
+> identity from the pool, exactly like a lead does. The publisher registers that
+> identity on the brand and deposits in the same session. Deposits are fully
+> independent of leads.
+>
+> Schema effects:
+> - `deposit_identity_source` defaults to `NEW_IDENTITY` on every offer.
+> - `deposits.test_data_id` gets a UNIQUE constraint, mirroring `leads.test_data_id`.
+>   Every identity is therefore consumed exactly once, by either a lead or a deposit,
+>   never both and never twice.
+> - `deposits.lead_id` stays in the schema but is unused; it is what allows an offer to
+>   be switched to `FROM_PRIOR_LEAD` later without a migration.
+>
+> **Consequence: the test-data pool now feeds both task types.** An offer needing 100
+> leads and 50 deposits consumes 150 identities per month, not 100. Combined with the
+> strict pool separation from item 1, a Manager must upload for their full combined
+> volume. The low-data alert therefore counts against leads plus deposits remaining,
+> not leads alone.
+>
+> Leads and deposits describe different people under this model, so there is no
+> lead-to-deposit conversion metric. Reporting shows the two as independent counters.
 
-**Recommendation:** `deposit_identity_source` per offer, defaulting to
-`FROM_PRIOR_LEAD`. On the deposit screen the publisher picks from their own completed
-leads on that offer that have no deposit yet; the identity details are shown again so
-they can log in. `NEW_IDENTITY` and `EITHER` are available for offers where deposit is
-genuinely standalone.
-
-This also gives you a real conversion metric: leads → deposits per offer.
+Original question: the brief treats leads and deposits as two independent task types on
+the same offer, but in a typical gaming funnel the lead is the registration and the
+deposit funds that same account.
 
 ---
 
 ## 3. Are monthly targets per offer, or per publisher?
 
-"100 leads/month" on an offer with five assigned publishers is ambiguous — 100 total,
-or 100 each?
+> **DECIDED: shared across all assigned publishers.** A 100-lead monthly target means
+> 100 leads total, whoever completes them. Every assigned publisher draws from the same
+> pool until it is exhausted, then the offer stops accepting leads for that month.
+>
+> `monthly_lead_cap` and `monthly_deposit_cap` stay on the assignment row, left NULL.
+> Setting one later restricts that one publisher without affecting anyone else.
+>
+> This is precisely why the `offer_publishers` row lock matters: with a shared target,
+> two publishers submitting simultaneously at 99/100 must not both succeed.
 
-**Recommendation:** the offer target is the **shared total**. Optionally set a
-per-publisher cap on the assignment row when you want to split it explicitly (e.g. 100
-total, capped at 25 each). Left blank, publishers race to the shared pool, which is
-what most internal testing wants.
+Original ambiguity: "100 leads/month" on an offer with five assigned publishers — 100
+total, or 100 each?
 
 ---
 
@@ -63,12 +105,17 @@ across the offer's life. Both are shown to the publisher.
 
 ## 5. What is a "month"?
 
-Counters, targets, and advances all reset monthly. Server UTC and your operating
-timezone will disagree by several hours, which shifts activity across month boundaries.
+> **DECIDED: `Asia/Kolkata` (IST, UTC+5:30).** Seeded as the `app_timezone` system
+> setting and used for every month boundary, day boundary, "today" counter, and
+> `month_key` generation in the system. Calendar months, not rolling 30-day windows.
+>
+> The server clock stays UTC; only the application's date logic uses IST. A lead
+> completed at 02:00 IST on 1 September counts toward September, even though it is
+> still 31 August in UTC. India has no daylight saving, so there are no DST edge cases
+> to handle.
 
-**Recommendation:** one `app_timezone` system setting, used for every month and day
-boundary in the system. Tell me the timezone (IST? UTC?) and it becomes the seeded
-default. Calendar months, not rolling 30-day windows.
+Original question: counters, targets, and advances all reset monthly, and server UTC
+versus your operating timezone would shift activity across month boundaries.
 
 ---
 

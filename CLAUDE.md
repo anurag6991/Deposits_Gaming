@@ -98,10 +98,28 @@ Postgres — mocks cannot prove `SKIP LOCKED` works.
 
 ---
 
+## Confirmed business rules
+
+These are settled. Do not re-litigate them; change them only on explicit instruction.
+
+1. **Test-data pools are strictly separated.** `data_source_policy = OWNER_ONLY` on
+   every offer. A Manager's offers consume only that Manager's uploads. No fallback to
+   the Super Admin pool, no cross-pool draw, ever.
+2. **Deposits use a fresh identity.** `deposit_identity_source = NEW_IDENTITY`. A
+   deposit task draws a new identity from the pool exactly as a lead does; the
+   publisher registers and deposits in one session. Leads and deposits are independent
+   and both consume pool records.
+3. **Monthly targets are shared** across all publishers assigned to an offer. 100
+   leads/month means 100 total, not 100 each. Per-publisher caps exist but stay NULL.
+4. **Timezone is `Asia/Kolkata` (IST).** Every month boundary, day boundary, "today"
+   counter, and `month_key` uses it. The server clock stays UTC.
+
 ## Current status
 
-**Phase 1 complete.** Architecture, schema, permissions, and plan documented.
-**Phase 2 blocked** pending answers in `docs/DECISIONS.md`, particularly items 1, 2, 3,
-and 5, which affect the schema.
+**Phase 1 complete.** Architecture, schema, permissions, and plan documented, with all
+blocking decisions resolved.
+
+**Phase 2 ready to start**, blocked only on toolchain: Node.js and PostgreSQL are not
+installed on the development machine, so migrations cannot be generated or run yet.
 
 Nothing has been built yet. The repository contains documentation only.

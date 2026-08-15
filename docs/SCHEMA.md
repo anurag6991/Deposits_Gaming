@@ -84,8 +84,8 @@ Index `(user_id, expires_at)`. Expired rows purged nightly.
 | lead_interval_seconds | int | gap between leads, per publisher |
 | deposit_interval_seconds | int | gap between deposits, per publisher |
 | gameplay_interval_days | int | |
-| data_source_policy | enum | `OWNER_ONLY` \| `OWNER_PLUS_SUPER_ADMIN` |
-| deposit_identity_source | enum | `FROM_PRIOR_LEAD` \| `NEW_IDENTITY` \| `EITHER` |
+| data_source_policy | enum | `OWNER_ONLY` (default) \| `OWNER_PLUS_SUPER_ADMIN` |
+| deposit_identity_source | enum | `NEW_IDENTITY` (default) \| `FROM_PRIOR_LEAD` \| `EITHER` |
 | low_data_threshold | int default 10 | |
 | currency | char(3) default 'USD' | future-proofing only |
 | created_at / updated_at | timestamptz | |
@@ -207,8 +207,15 @@ Index `(publisher_id, status)`, `(status, expires_at)`.
 | month_key | text generated | |
 | created_at / updated_at | timestamptz | |
 
-Indexes: `(offer_id, publisher_id, deposited_at DESC)`, `(status, next_gameplay_due_at)`
-for the overdue query, `(manager_id, month_key)`, `(publisher_id, month_key)`.
+- `UNIQUE (test_data_id)` — mirrors the constraint on `leads`. Under the confirmed
+  `NEW_IDENTITY` model every identity is consumed exactly once, by either a lead or a
+  deposit, never both and never twice.
+- Indexes: `(offer_id, publisher_id, deposited_at DESC)`,
+  `(status, next_gameplay_due_at)` for the overdue query, `(manager_id, month_key)`,
+  `(publisher_id, month_key)`.
+
+`lead_id` is present but unused while `deposit_identity_source = NEW_IDENTITY`. It
+exists so an offer can be switched to `FROM_PRIOR_LEAD` later without a migration.
 
 ## deposit_status_changes
 
@@ -292,7 +299,7 @@ gameplay does not produce a new row on every cron tick.
 
 `key` PK, `value` jsonb, `updated_by_id`, `updated_at`.
 
-Seeded keys: `app_timezone`, `offer_default_duration_days` (90),
+Seeded keys: `app_timezone` (**`Asia/Kolkata`**), `offer_default_duration_days` (90),
 `reservation_ttl_minutes` (30), `low_data_threshold_default` (10), `max_upload_mb`,
 `task_session_ttl_minutes`.
 

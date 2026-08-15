@@ -306,6 +306,20 @@ cached value; the truth is the append-only `balance_entries` ledger. Every chang
 
 ### 8.5 Months
 
-"This month" means calendar month in `APP_TIMEZONE` (a system setting, not hard-coded).
-Activity rows store a generated `month_key` (`YYYY-MM`) computed in that timezone, so
-monthly grouping is a plain indexed equality filter rather than a range scan.
+"This month" means calendar month in `APP_TIMEZONE`, confirmed as **`Asia/Kolkata`**
+(IST, UTC+5:30). It is a system setting, not hard-coded. Activity rows store a
+generated `month_key` (`YYYY-MM`) computed in that timezone, so monthly grouping is a
+plain indexed equality filter rather than a range scan.
+
+The server clock stays UTC; only date logic converts. A lead completed at 02:00 IST on
+1 September belongs to September even though UTC still reads 31 August. India observes
+no daylight saving, so there are no DST boundaries to handle.
+
+### 8.6 Pool consumption
+
+Both task types draw from the same test-data pool: a lead consumes one identity and a
+deposit consumes one identity (confirmed `NEW_IDENTITY` model). An offer targeting 100
+leads and 50 deposits therefore needs 150 identities for the month. Combined with
+strict pool separation, each owner must upload for their own full combined volume —
+there is no fallback to another pool. Low-data alerts count remaining identities
+against leads plus deposits outstanding.
