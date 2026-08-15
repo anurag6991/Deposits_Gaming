@@ -286,17 +286,29 @@ Publisher list, count, search, or export Super Admin records.
 
 ### 8.2 Timer and target enforcement (one mutex, both checks)
 
-`POST /tasks/start` and the completion endpoints both begin by taking a row lock:
+`POST /tasks/start` and the completion endpoints both begin by taking a **per-offer**
+advisory lock:
 
 ```sql
-SELECT * FROM offer_publishers
- WHERE offer_id = $1 AND publisher_id = $2 FOR UPDATE;
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0));  -- $1 = offer id
 ```
 
-This serialises everything for that (offer, publisher) pair, so inside the same
-transaction we can safely check the timer, check the monthly target, insert the
-activity, and commit. No double-spend, no target overshoot, and no global lock that
-would block unrelated publishers.
+Inside that lock the transaction checks the timer, checks the monthly target, inserts
+the activity, and commits.
+
+**The lock is per offer, not per (offer, publisher).** An earlier version of this
+document specified a `SELECT ... FROM offer_publishers FOR UPDATE` row lock scoped to
+the pair. That was wrong, and the concurrency test caught it: monthly targets are
+*shared* across all assigned publishers (decision 3), so ten publishers hold ten
+different assignment rows, never block one another, all read "4 of 5 completed"
+simultaneously, and all ten insert. A shared counter requires a shared lock.
+
+An advisory lock rather than `SELECT ... FROM offers FOR UPDATE`: it releases
+automatically at commit or rollback and does not block unrelated writes to the offer
+row, such as an admin editing the description while publishers are working.
+
+The cost is that activity on a single offer serialises. That is inherent to a shared
+counter, the transactions are short, and different offers never contend.
 
 Timers are **derived**, never stored as countdowns:
 `next_available_at = MAX(completed_at for that offer + publisher) + offer.interval`.

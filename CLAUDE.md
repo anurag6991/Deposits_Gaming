@@ -183,13 +183,26 @@ Still to build in Phase 3: users, offers, test-data import, deposits, gameplay,
 withdrawals, advances, proxy CRUD, reports, notifications, and the cron worker.
 Then Phase 4 (frontend), 5 (deployment), 6 (security review).
 
+### Local database
+
+Real PostgreSQL 16.15 (x64 under ARM64 emulation) at `C:\Users\anura\pgsql16`,
+listening on **127.0.0.1:5433 only**. Start it with:
+
+```bash
+C:\Users\anura\pgsql16\pgsql\bin\pg_ctl.exe -D C:\Users\anura\pgsql16\data -l C:\Users\anura\pgsql16\pg.log start
+```
+
+Databases: `deposits_dev`, `deposits_shadow`, `deposits_test`. Credentials are in
+`.env.development`, which is gitignored and dev-only.
+
+**Node must stay x64.** Prisma ships no Windows ARM64 query engine; the ARM64 build
+fails with "not a valid Win32 application". Do not reinstall the ARM64 build.
+
 ### Known gaps — do not mistake these for done
 
-1. **No real PostgreSQL yet.** The dev machine is Windows ARM64 and no native build
-   exists. PGlite covers schema and invariants but is **single-connection**, so it
-   cannot prove `FOR UPDATE SKIP LOCKED` works under genuinely parallel transactions.
-   That test is written against a real server and is still pending.
-2. **The VPS has never been inspected.** The SSH key at `~/.ssh/id_ed25519_hstgr` is
+1. **The VPS has never been inspected.** The SSH key at `~/.ssh/id_ed25519_hstgr` is
    generated but not installed.
-3. **No frontend exists.**
-4. **Nothing has been deployed.** No Nginx, PM2, TLS, or backups yet.
+2. **No frontend exists.**
+3. **Nothing has been deployed.** No Nginx, PM2, TLS, or backups yet.
+4. **Most Phase 3 modules are unwritten** — users, offers, test-data import, reports,
+   notifications, and the cron worker. Deposits exist as a service but have no router.

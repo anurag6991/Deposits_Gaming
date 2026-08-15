@@ -51,11 +51,14 @@ const TAG_BYTES = 16;
  * GCM is authenticated, so tampering with a stored value causes decryption to
  * throw rather than silently returning corrupted plaintext.
  */
-export function encryptSecret(plain: string): Buffer {
+export function encryptSecret(plain: string): Uint8Array<ArrayBuffer> {
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
   const ciphertext = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  const packed = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  // A plain Uint8Array over its own ArrayBuffer: Node's Buffer may sit on a
+  // pooled or shared buffer, which Prisma's Bytes type does not accept.
+  return new Uint8Array(packed);
 }
 
 export function decryptSecret(stored: Buffer | Uint8Array | null | undefined): string | null {

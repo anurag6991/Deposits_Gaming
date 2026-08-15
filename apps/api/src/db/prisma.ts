@@ -46,14 +46,25 @@ export function withTransaction<T>(
 }
 
 /**
- * Takes the per-(offer, publisher) mutex.
+ * Takes the per-OFFER activity mutex, then loads the publisher's assignment.
  *
- * Every path that checks a timer or a monthly target must call this FIRST, inside
- * the transaction, before reading counts. It serialises concurrent activity for
- * that one pair while leaving every other publisher unblocked.
+ * Every path that checks a timer or a monthly target must call this FIRST,
+ * inside the transaction, before reading any count.
  *
- * Without it, two simultaneous submissions both read "99 of 100 done" and both
- * insert, overshooting the target — the classic check-then-act race.
+ * The lock is per OFFER, not per (offer, publisher). That distinction is the
+ * whole point and it was originally wrong: monthly targets are SHARED across all
+ * publishers assigned to an offer (decision 3), so a lock scoped to one pair does
+ * not serialise anything — ten publishers hold ten different rows, all read
+ * "4 of 5 done" simultaneously, and all ten insert. A shared counter requires a
+ * shared lock. The concurrency test proved this; do not narrow the scope again.
+ *
+ * An advisory transaction lock rather than `SELECT ... FROM offers FOR UPDATE`:
+ * it costs no row visibility, releases automatically at commit or rollback, and
+ * does not block unrelated writes to the offer row such as an admin editing the
+ * description while publishers work.
+ *
+ * The cost is that activity on one offer serialises. That is inherent to a shared
+ * counter, the transactions are short, and different offers never contend.
  *
  * Returns null when the publisher is not assigned to the offer.
  */
@@ -62,6 +73,9 @@ export async function lockOfferPublisher(
   offerId: string,
   publisherId: string,
 ): Promise<{ id: string; monthlyLeadCap: number | null; monthlyDepositCap: number | null; active: boolean } | null> {
+  // Blocks until every other transaction working this offer has committed.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${offerId}::text, 0))`;
+
   const rows = await tx.$queryRaw<
     { id: string; monthly_lead_cap: number | null; monthly_deposit_cap: number | null; active: boolean }[]
   >`
@@ -69,7 +83,6 @@ export async function lockOfferPublisher(
       FROM offer_publishers
      WHERE offer_id = ${offerId}::uuid
        AND publisher_id = ${publisherId}::uuid
-     FOR UPDATE
   `;
 
   const row = rows[0];

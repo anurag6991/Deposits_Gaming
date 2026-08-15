@@ -8,6 +8,70 @@ Format for each entry: what changed, why, and anything a future session must not
 
 ---
 
+## 2026-08-15 — Real PostgreSQL locally, and a genuine concurrency bug found
+
+**Commit:** see `fix(api)` / `test(api)` commits after `d01bd95`
+
+### Getting a real database on Windows ARM64
+
+Three dead ends, then a fix worth recording:
+
+| Attempt | Result |
+|---|---|
+| `winget install PostgreSQL.PostgreSQL.16` | 403 — EDB does not serve the installer here |
+| WSL | Not installed; installing it needs admin |
+| Docker | Not installed |
+| **EDB binaries zip** | **Works.** The 403 was only on the `.exe` installer; the binaries archive downloads fine |
+
+x64 PostgreSQL 16.15 runs correctly under Windows 11 ARM64 emulation. Cluster lives at
+`C:\Users\anura\pgsql16`, listening on **127.0.0.1:5433 only**, with databases
+`deposits_dev`, `deposits_shadow`, `deposits_test`.
+
+```
+C:\Users\anura\pgsql16\pgsql\bin\pg_ctl.exe -D C:\Users\anura\pgsql16\data -l C:\Users\anura\pgsql16\pg.log start
+```
+
+**Node had to be switched from ARM64 to x64.** Prisma ships no Windows ARM64 query
+engine, so `query_engine-windows.dll.node` failed with "not a valid Win32 application".
+Reinstalling Node as x64 (`winget install OpenJS.NodeJS.LTS --architecture x64 --force`)
+puts the whole toolchain under emulation, matching PostgreSQL. **Do not reinstall the
+ARM64 build** — Prisma will break again.
+
+`initdb` takes several minutes under emulation. That is expected, not a hang.
+
+### The bug: shared targets were not actually enforced
+
+With a real server the concurrency tests could finally run, and one failed immediately:
+an offer with a monthly target of 5 accepted **all 10** simultaneous completions.
+
+Cause: `lockOfferPublisher` took `SELECT ... FROM offer_publishers FOR UPDATE`, scoped
+to one (offer, publisher) pair. Ten publishers hold ten different rows, so nothing was
+serialised — all ten read "4 of 5 completed" at once and all ten inserted. The classic
+check-then-act race, in the exact place the design claimed to have solved it.
+
+The design document asserted this lock was sufficient. It was not: monthly targets are
+**shared across all assigned publishers** (decision 3), and a shared counter needs a
+shared lock.
+
+Fix: a per-OFFER advisory transaction lock,
+`pg_advisory_xact_lock(hashtextextended(offer_id::text, 0))`, taken before any counter
+is read. Advisory rather than a row lock on `offers` so it releases automatically and
+does not block an admin editing the offer while publishers work.
+
+**Do not narrow this lock back to the (offer, publisher) pair.** The cost — activity on
+one offer serialises — is inherent to a shared counter. Transactions are short and
+different offers never contend.
+
+27/27 tests now pass, including 20 publishers racing for 20 identities, 15 racing for
+5, country isolation, own-pool-before-central ordering, per-publisher timers, and the
+one-open-task rule.
+
+Lesson worth keeping: every concurrency guarantee in the architecture doc was
+plausible, and one of them was false. Only a real server with real parallel
+transactions could tell them apart.
+
+---
+
 ## 2026-08-15 — Phase 3 started: backend foundation
 
 **Commit:** see `git log` for `feat(api)` commits after `ac73f31`

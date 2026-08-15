@@ -1,5 +1,5 @@
 import pino from 'pino';
-import { env, isProduction } from '../config/env.js';
+import { env } from '../config/env.js';
 
 /**
  * Application logger.
@@ -43,9 +43,9 @@ export const logger = pino({
   redact: { paths: REDACT, censor: '[redacted]' },
   base: { service: 'deposits-api' },
   timestamp: pino.stdTimeFunctions.isoTime,
-  ...(isProduction
-    ? {}
-    : { transport: { target: 'pino-pretty', options: { colorize: true, singleLine: false } } }),
+  ...(env.NODE_ENV === 'development'
+    ? { transport: { target: 'pino-pretty', options: { colorize: true, singleLine: false } } }
+    : {}),
 });
 
 export type Logger = typeof logger;
