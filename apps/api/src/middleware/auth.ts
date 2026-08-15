@@ -69,9 +69,16 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
 
     // A user under a forced password change may only reach the endpoints that
     // let them change it. Everything else is closed.
-    const path = req.path;
-    const allowedWhilePasswordChangePending =
-      path === '/auth/change-password' || path === '/auth/me' || path === '/auth/logout';
+    //
+    // Built from baseUrl + path, not req.path alone: inside a mounted router
+    // req.path is relative to the mount point, so '/api/v1/auth/me' arrives here
+    // as '/me' and a naive comparison silently never matches.
+    const fullPath = `${req.baseUrl}${req.path}`;
+    const allowedWhilePasswordChangePending = [
+      '/api/v1/auth/change-password',
+      '/api/v1/auth/me',
+      '/api/v1/auth/logout',
+    ].includes(fullPath);
 
     if (user.mustChangePassword && !allowedWhilePasswordChangePending) {
       throw new AppError('PASSWORD_CHANGE_REQUIRED');

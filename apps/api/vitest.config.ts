@@ -32,6 +32,11 @@ export default defineConfig({
       COOKIE_SECRET: 'test-only-cookie-secret-padding-to-32-chars!',
       ENCRYPTION_KEY: 'dGVzdC1vbmx5LWtleS1ub3QtZm9yLXByb2R1Y3QhISE=',
       LOG_LEVEL: 'silent',
+      // Generous so the shared in-memory limiter does not trip partway through a
+      // suite and fail an unrelated assertion. Limiter behaviour is asserted in
+      // its own focused test, which sets its own ceiling.
+      RATE_LIMIT_MAX: '100000',
+      AUTH_RATE_LIMIT_MAX: '100000',
     },
   },
 });

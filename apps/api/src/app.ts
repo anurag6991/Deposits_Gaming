@@ -7,6 +7,7 @@ import { prisma } from './db/prisma.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { generalLimiter, ok, requestId } from './middleware/common.js';
 import { authRouter } from './modules/auth/auth.router.js';
+import { apiRouter } from './modules/routes.js';
 import { tasksRouter } from './modules/tasks/tasks.router.js';
 
 /**
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api/v1', generalLimiter);
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/tasks', tasksRouter);
+  app.use('/api/v1', apiRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
