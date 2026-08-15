@@ -576,6 +576,23 @@ leadsRouter.post(
 // Advances, proxies, reports, settings, notifications, audit
 // ---------------------------------------------------------------------------
 
+const withdrawalsRouter = Router();
+
+withdrawalsRouter.get(
+  '/',
+  authorize('withdrawal.read'),
+  validate({
+    query: z.object({
+      publisherId: uuid.optional(),
+      offerId: uuid.optional(),
+      monthKey: monthKeyParam.optional(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    }),
+  }),
+  handler(async (req, res) => ok(res, await deposits.listWithdrawals(requireActor(req), query(req)))),
+);
+
 const advancesRouter = Router();
 
 advancesRouter.get(
@@ -777,6 +794,7 @@ apiRouter.use('/offers', offersRouter);
 apiRouter.use('/test-data', testDataRouter);
 apiRouter.use('/deposits', depositsRouter);
 apiRouter.use('/leads', leadsRouter);
+apiRouter.use('/withdrawals', withdrawalsRouter);
 apiRouter.use('/advances', advancesRouter);
 apiRouter.use('/proxies', proxiesRouter);
 apiRouter.use('/reports', reportsRouter);

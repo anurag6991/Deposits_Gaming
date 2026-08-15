@@ -535,6 +535,56 @@ export async function listDeposits(actor: Actor, filters: DepositFilters) {
   };
 }
 
+/** Withdrawal history, scoped like every other activity list. */
+export async function listWithdrawals(
+  actor: Actor,
+  filters: { publisherId?: string; offerId?: string; monthKey?: string; from?: string; to?: string } = {},
+) {
+  const where: Prisma.WithdrawalWhereInput = {
+    ...activityScope(actor),
+    ...(filters.publisherId ? { publisherId: filters.publisherId } : {}),
+    ...(filters.offerId ? { offerId: filters.offerId } : {}),
+    ...(filters.monthKey ? { monthKey: filters.monthKey } : {}),
+    ...(filters.from || filters.to
+      ? {
+          withdrawnAt: {
+            ...(filters.from ? { gte: new Date(filters.from) } : {}),
+            ...(filters.to ? { lte: new Date(filters.to) } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const [rows, sum] = await Promise.all([
+    prisma.withdrawal.findMany({
+      where,
+      orderBy: { withdrawnAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        amount: true,
+        method: true,
+        withdrawnAt: true,
+        notes: true,
+        monthKey: true,
+        deposit: { select: { id: true, accountName: true, currentBalance: true } },
+        offer: { select: { id: true, name: true, brand: true } },
+        publisher: { select: { id: true, fullName: true } },
+      },
+    }),
+    prisma.withdrawal.aggregate({ where, _sum: { amount: true } }),
+  ]);
+
+  return {
+    rows: rows.map((r) => ({
+      ...r,
+      amount: r.amount.toString(),
+      deposit: { ...r.deposit, currentBalance: r.deposit.currentBalance.toString() },
+    })),
+    total: (sum._sum.amount ?? D(0)).toString(),
+  };
+}
+
 /** Audited reveal of the test-account password. */
 export async function revealDepositSecret(
   actor: Actor,
