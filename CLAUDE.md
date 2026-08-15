@@ -9,12 +9,65 @@ balances, gameplay, withdrawals, and advances.
 
 | Document | Contents |
 |---|---|
+| **`docs/BUILD_LOG.md`** | **What was built when and why, newest first. Read this first when resuming.** |
 | `docs/ARCHITECTURE.md` | Stack, repo layout, environments, deployment, API surface, core algorithms |
 | `docs/SCHEMA.md` | Full database design and rationale |
 | `docs/PERMISSIONS.md` | Role and permission matrix, data-scoping rules |
 | `docs/DECISIONS.md` | Open questions and the defaults in force |
 | `docs/ROADMAP.md` | Phased plan and suggested features |
 | `docs/RUNBOOK.md` | Operations (written in Phase 5) |
+
+**When you change something, append to `docs/BUILD_LOG.md`.** Code shows what the
+system does; the log records why, and which alternatives were rejected. A future
+session that cannot see the reasoning will re-litigate settled decisions or undo a
+fix without knowing what it was for.
+
+## Where things live
+
+```
+apps/api/src/
+  config/env.ts            Zod-validated environment; exits at boot if wrong
+  lib/errors.ts            AppError + code-to-HTTP-status mapping
+  lib/logger.ts            Pino + the redaction list (secrets can never be logged)
+  lib/crypto.ts            Argon2id passwords, AES-256-GCM secrets, sha256 tokens
+  db/prisma.ts             Client, withTransaction, lockOfferPublisher  <-- the mutex
+  db/scope.ts              scopeFilter helpers  <-- the ONLY place role becomes a WHERE
+  middleware/auth.ts       authenticate (re-reads the user), authorize (capability)
+  middleware/common.ts     requestId, validate, rate limiters, handler, ok
+  middleware/error.ts      The only place an error becomes a response
+  modules/audit/           writeAudit(tx, ...) — joins the caller's transaction
+  modules/auth/            Login, refresh rotation with reuse detection, logout
+  modules/settings/        System settings with a short cache
+  modules/proxies/         Resolution priority + audited credential reveal
+  modules/tasks/           startTask, abandonTask, eligibleOffers  <-- concurrency core
+  modules/leads/           completeLead, resetLead
+  app.ts / server.ts       Express wiring; graceful shutdown
+
+apps/api/prisma/
+  schema.prisma            20 models, 14 enums
+  migrations/001_initial   Generated DDL
+  migrations/002_...       Hand-written CHECKs, triggers, partial indexes
+
+packages/shared/src/
+  permissions.ts           ROLE_PERMISSIONS, can(), scopeFor()
+  time.ts                  monthKey, dayKey, monthRange, dayRange (IST)
+  errors.ts                ERROR_CODES — the shared code/message table
+
+ops/scripts/
+  verify-migrations.mjs    Applies migrations to PGlite, asserts 24 invariants
+  guard-dev-only.mjs       Refuses destructive commands when NODE_ENV=production
+```
+
+## Commands
+
+```bash
+npm install                # workspaces; scripts pre-approved in package.json
+npm run verify:db          # apply migrations to PGlite + assert invariants
+npm run db:validate        # prisma validate
+npm run db:generate        # prisma generate
+npm test                   # vitest
+npx tsc -p apps/api/tsconfig.json --noEmit
+```
 
 ---
 
@@ -120,10 +173,23 @@ These are settled. Do not re-litigate them; change them only on explicit instruc
 
 ## Current status
 
-**Phase 1 complete.** Architecture, schema, permissions, and plan documented, with all
-blocking decisions resolved.
+**Phase 1 complete** — architecture and all blocking decisions settled.
+**Phase 2 complete** — schema, both migrations, shared package. 24/24 invariant checks
+pass under `npm run verify:db`.
+**Phase 3 in progress** — backend foundation, auth, and the task/lead concurrency core
+are written and typecheck clean; 15/15 timezone tests pass.
 
-**Phase 2 ready to start**, blocked only on toolchain: Node.js and PostgreSQL are not
-installed on the development machine, so migrations cannot be generated or run yet.
+Still to build in Phase 3: users, offers, test-data import, deposits, gameplay,
+withdrawals, advances, proxy CRUD, reports, notifications, and the cron worker.
+Then Phase 4 (frontend), 5 (deployment), 6 (security review).
 
-Nothing has been built yet. The repository contains documentation only.
+### Known gaps — do not mistake these for done
+
+1. **No real PostgreSQL yet.** The dev machine is Windows ARM64 and no native build
+   exists. PGlite covers schema and invariants but is **single-connection**, so it
+   cannot prove `FOR UPDATE SKIP LOCKED` works under genuinely parallel transactions.
+   That test is written against a real server and is still pending.
+2. **The VPS has never been inspected.** The SSH key at `~/.ssh/id_ed25519_hstgr` is
+   generated but not installed.
+3. **No frontend exists.**
+4. **Nothing has been deployed.** No Nginx, PM2, TLS, or backups yet.
