@@ -62,3 +62,27 @@ export interface ApiSuccessBody<T> {
   success: true;
   data: T;
 }
+
+/**
+ * Whether a URL is safe to render as a clickable link.
+ *
+ * Zod's `.url()` accepts ANY valid URL, including `javascript:` and `data:`.
+ * Offer URLs are rendered as an "Open website" link on the publisher task
+ * screen, so an offer created with `javascript:alert(1)` would execute in the
+ * publisher's browser when clicked — stored XSS, reachable by anyone who can
+ * create an offer.
+ *
+ * Shared so the backend can reject it on write and the frontend can refuse to
+ * render it, rather than trusting that the check happened upstream.
+ */
+export function isSafeHttpUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+}
+
+export const UNSAFE_URL_MESSAGE = 'Enter a web address starting with http:// or https://';

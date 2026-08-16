@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isSafeHttpUrl } from '@deposits/shared';
 import { api, ApiError } from '@/lib/api';
 import { useRequireAuth } from '@/lib/auth';
 import { Shell } from '@/components/Shell';
@@ -251,9 +252,19 @@ function WorkScreen() {
             >
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-2">
-                  <a href={task.offer.url} target="_blank" rel="noopener noreferrer">
-                    <Button>Open website</Button>
-                  </a>
+                  {/* The API rejects non-http(s) schemes on write, but a link is
+                      rendered from stored data, so it is re-checked here too:
+                      a javascript: URL that ever reached the database must not
+                      become executable just because it is displayed. */}
+                  {isSafeHttpUrl(task.offer.url) ? (
+                    <a href={task.offer.url} target="_blank" rel="noopener noreferrer">
+                      <Button>Open website</Button>
+                    </a>
+                  ) : (
+                    <Alert tone="danger">
+                      This offer has an invalid web address. Ask an admin to fix it.
+                    </Alert>
+                  )}
                   <Button
                     variant="secondary"
                     onClick={() => void navigator.clipboard.writeText(task.offer.url)}

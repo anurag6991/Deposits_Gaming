@@ -3,6 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../config/env.js';
 import { AppError } from '../lib/errors.js';
+import { isSafeHttpUrl, UNSAFE_URL_MESSAGE } from '@deposits/shared';
 import { authenticate, authorize, requireActor, superAdminOnly } from '../middleware/auth.js';
 import { handler, ok, query, validate } from '../middleware/common.js';
 import { auditContext } from './audit/audit.service.js';
@@ -30,6 +31,19 @@ import { testDataScope } from '../db/scope.js';
 const uuid = z.string().uuid();
 const money = z.string().regex(/^\d+(\.\d{1,2})?$/, 'Use a number such as 100 or 100.50');
 const monthKeyParam = z.string().regex(/^\d{4}-\d{2}$/);
+
+/**
+ * A URL safe to render as a link.
+ *
+ * `z.string().url()` alone is NOT enough: it accepts `javascript:alert(1)`,
+ * which the publisher task screen would render as a clickable "Open website"
+ * link and execute in their browser. Scheme must be http or https.
+ */
+const safeUrl = z
+  .string()
+  .max(500)
+  .url()
+  .refine(isSafeHttpUrl, { message: UNSAFE_URL_MESSAGE });
 
 // Files are held in memory, parsed, and discarded. Uploads are never written to
 // disk, which removes a whole class of path-traversal and leftover-file issues.
@@ -151,7 +165,7 @@ const offerBody = z.object({
   notes: z.string().max(2000).optional(),
   publisherInstructions: z.string().max(2000).optional(),
   countryCode: z.string().length(2),
-  url: z.string().url().max(500),
+  url: safeUrl,
   startDate: z.string().optional(),
   expiryDate: z.string().optional(),
   monthlyLeadTarget: z.number().int().min(0).max(1_000_000),

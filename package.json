@@ -21,7 +21,8 @@
     "db:migrate": "npm run db:migrate --workspace=@deposits/api",
     "db:deploy": "npm run db:deploy --workspace=@deposits/api",
     "db:seed": "npm run db:seed --workspace=@deposits/api",
-    "verify:db": "node ops/scripts/verify-migrations.mjs"
+    "verify:db": "node ops/scripts/verify-migrations.mjs",
+    "security:probe": "node ops/scripts/security-probe.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",
@@ -33,7 +34,10 @@
     "@prisma/client@6.19.3": true,
     "@prisma/engines@6.19.3": true,
     "esbuild@0.28.2": true,
-    "esbuild@0.21.5": true,
-    "sharp@0.34.5": true
+    "esbuild@0.21.5": true
+  },
+  "overrides": {
+    "postcss": "^8.5.26",
+    "sharp": "^0.35.3"
   }
 }
